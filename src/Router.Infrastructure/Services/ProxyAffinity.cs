@@ -7,7 +7,7 @@ namespace Router.Infrastructure.Services;
 /// <summary>
 /// 代理节点选择：会话黏连（同一 x-session-id 复用同一节点）+ 优选指数（CompositeScore）。
 /// </summary>
-internal static class ProxyAffinity
+public static class ProxyAffinity
 {
     internal static async Task<ProxyEndpoint?> SelectAsync(
         string pluginKey,
@@ -53,7 +53,8 @@ internal static class ProxyAffinity
         return selected;
     }
 
-    internal static string AffinityKey(string pluginKey, string sessionId)
+    /// <summary>会话黏连键：按插件命名空间隔离（proxy-affinity:{pluginKey}:{sessionId}）。</summary>
+    public static string AffinityKey(string pluginKey, string sessionId)
         => $"proxy-affinity:{pluginKey}:{sessionId}";
 
     /// <summary>

@@ -151,9 +151,12 @@ public sealed class ProxyPoolHttpClientFactory(
 
             if (selected is not null) triedNodes?.Add(selected.Id);
         }
-        else if (!options.AllowDirectFallback)
+        else
         {
-            throw new ProxyPoolUnavailableException();
+            // 宿主严格模式优先于调用方选项：Proxy.AllowDirectFallback=false 时即便调用方显式允许也一律失败。
+            var hostAllowsDirectFallback = _proxyOptions?.CurrentValue.AllowDirectFallback ?? true;
+            if (!hostAllowsDirectFallback || !options.AllowDirectFallback)
+                throw new ProxyPoolUnavailableException();
         }
 
         cancellationToken.ThrowIfCancellationRequested();

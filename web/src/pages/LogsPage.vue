@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, h, reactive, ref, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
-import { NAlert, NButton, NCard, NDataTable, NDatePicker, NEmpty, NIcon, NInput, NModal, NPagination, NSpin, NTag } from 'naive-ui'
+import { NAlert, NButton, NCard, NDataTable, NDatePicker, NEmpty, NIcon, NInput, NModal, NPagination, NSpin, NTag, NTooltip, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { api, type RequestLog } from '@/services/api'
 import { RefreshOutline } from '@vicons/ionicons5'
@@ -27,17 +27,32 @@ function attemptTagType(attempt: NonNullable<RequestLog['attemptDetails']>[numbe
 }
 function attemptStatus(attempt: NonNullable<RequestLog['attemptDetails']>[number]) { return attempt.statusCode === null ? '未收到 HTTP 响应' : `HTTP ${attempt.statusCode}` }
 const rows = computed(() => query.data.value?.items ?? [])
+const message = useMessage()
+const releasingSession = ref(false)
+async function releaseAffinity() {
+  const sessionId = selectedLog.value?.sessionId
+  if (!sessionId) return
+  releasingSession.value = true
+  try {
+    await api.releaseProxyAffinity(sessionId)
+    message.success(`已解除会话 ${sessionId} 的代理黏连，下一次请求将重新选择节点`)
+  } catch {
+    message.error('更换代理失败，请稍后重试')
+  } finally {
+    releasingSession.value = false
+  }
+}
 const columns: DataTableColumns<RequestLog> = [
-  { title: '时间', key: 'createdAt', render: row => new Date(row.createdAt).toLocaleString() }, { title: '平台', key: 'platform', render: row => row.platform || '—' }, { title: '模型', key: 'model', render: row => row.model || '—' }, { title: '状态码', key: 'statusCode' }, { title: '耗时', key: 'durationMs', render: row => `${row.durationMs} ms` }, { title: '结果', key: 'success', render: row => h(NTag, { type: row.success ? 'success' : row.cancelled ? 'warning' : 'error', round: true }, { default: () => row.success ? '成功' : row.cancelled ? '已取消' : '失败' }) }, { title: '详情', key: 'details', render: row => h(NButton, { size: 'small', secondary: true, onClick: () => openDetails(row) }, { default: () => row.attemptDetails?.length ? `查看 (${row.attemptDetails.length})` : '查看' }) },
+  { title: '时间', key: 'createdAt', render: row => new Date(row.createdAt).toLocaleString() }, { title: '平台', key: 'platform', render: row => row.platform || '—' }, { title: '模型', key: 'model', render: row => row.model || '—' }, { title: '会话', key: 'sessionId', render: row => row.sessionId ? h(NTooltip, null, { trigger: () => h('code', { style: 'font-size:12px' }, row.sessionId!.length > 14 ? `${row.sessionId!.slice(0, 14)}…` : row.sessionId!), default: () => row.sessionId! }) : '—' }, { title: '状态码', key: 'statusCode' }, { title: '耗时', key: 'durationMs', render: row => `${row.durationMs} ms` }, { title: '结果', key: 'success', render: row => h(NTag, { type: row.success ? 'success' : row.cancelled ? 'warning' : 'error', round: true }, { default: () => row.success ? '成功' : row.cancelled ? '已取消' : '失败' }) }, { title: '详情', key: 'details', render: row => h(NButton, { size: 'small', secondary: true, onClick: () => openDetails(row) }, { default: () => row.attemptDetails?.length ? `查看 (${row.attemptDetails.length})` : '查看' }) },
 ]
 </script>
 <template>
   <div class="table-page">
-  <NCard :bordered="false" class="table-card"><ResponsiveFilterPanel title="筛选请求日志"><div class="table-filter-heading"><div><strong>筛选请求日志</strong><span>默认从今天 00:00:00 查询到当前时间后 1 小时，可按平台、模型或 TraceId 定位</span></div><NButton quaternary size="small" @click="resetTimeRange">重置时间</NButton></div><div class="filter-row"><NDatePicker v-model:value="timeRange" type="datetimerange" clearable format="yyyy-MM-dd HH:mm" start-placeholder="开始时间" end-placeholder="结束时间" /><NInput v-model:value="filter.platform" clearable placeholder="平台" /><NInput v-model:value="filter.model" clearable placeholder="模型" /><NInput v-model:value="filter.keyword" clearable placeholder="TraceId / 关键词" /></div></ResponsiveFilterPanel><NSpin v-if="query.isPending.value" /><NAlert v-else-if="query.isError.value" type="error" title="日志加载失败">请刷新后重试。</NAlert><div v-else class="table-data-wrap"><NDataTable class="table-data-grid" :columns="columns" :data="rows" :scroll-x="860" :flex-height="true" :bordered="false"><template #empty><NEmpty description="暂无请求日志" /></template></NDataTable></div><div class="table-footer"><span>共 {{ query.data.value?.total ?? 0 }} 条</span><div class="table-pagination"><NButton secondary circle :loading="query.isFetching.value" aria-label="刷新请求日志" title="刷新" @click="query.refetch()"><template #icon><NIcon :component="RefreshOutline" /></template></NButton><NPagination v-model:page="page" v-model:page-size="pageSize" :page-count="query.data.value?.totalPages ?? 1" :page-sizes="[20, 50, 100]" show-size-picker /></div></div></NCard>
+  <NCard :bordered="false" class="table-card"><ResponsiveFilterPanel title="筛选请求日志"><div class="table-filter-heading"><div><strong>筛选请求日志</strong><span>默认从今天 00:00:00 查询到当前时间后 1 小时，可按平台、模型或 TraceId 定位</span></div><NButton quaternary size="small" @click="resetTimeRange">重置时间</NButton></div><div class="filter-row"><NDatePicker v-model:value="timeRange" type="datetimerange" clearable format="yyyy-MM-dd HH:mm" start-placeholder="开始时间" end-placeholder="结束时间" /><NInput v-model:value="filter.platform" clearable placeholder="平台" /><NInput v-model:value="filter.model" clearable placeholder="模型" /><NInput v-model:value="filter.keyword" clearable placeholder="TraceId / 关键词" /></div></ResponsiveFilterPanel><NSpin v-if="query.isPending.value" /><NAlert v-else-if="query.isError.value" type="error" title="日志加载失败">请刷新后重试。</NAlert><div v-else class="table-data-wrap"><NDataTable class="table-data-grid" :columns="columns" :data="rows" :scroll-x="980" :flex-height="true" :bordered="false"><template #empty><NEmpty description="暂无请求日志" /></template></NDataTable></div><div class="table-footer"><span>共 {{ query.data.value?.total ?? 0 }} 条</span><div class="table-pagination"><NButton secondary circle :loading="query.isFetching.value" aria-label="刷新请求日志" title="刷新" @click="query.refetch()"><template #icon><NIcon :component="RefreshOutline" /></template></NButton><NPagination v-model:page="page" v-model:page-size="pageSize" :page-count="query.data.value?.totalPages ?? 1" :page-sizes="[20, 50, 100]" show-size-picker /></div></div></NCard>
   </div>
   <NModal v-model:show="detailVisible" preset="card" class="request-detail-modal" :title="selectedLog ? `${selectedLog.model || '模型请求'} · 请求详情` : '请求详情'" style="width: min(820px, calc(100vw - 32px)); height: min(640px, calc(100dvh - 32px)); max-height: calc(100dvh - 32px);">
     <div v-if="selectedLog" class="request-detail">
-      <div class="request-detail-meta"><span>TraceId <code>{{ selectedLog.traceId }}</code></span><span>宿主 {{ selectedLog.durationMs }} ms · 上游 {{ selectedAttemptDuration }} ms · {{ new Date(selectedLog.createdAt).toLocaleString() }}</span><NTag v-if="selectedLog.cancelled" type="warning" size="small" round>调用方已取消</NTag></div>
+      <div class="request-detail-meta"><span>TraceId <code>{{ selectedLog.traceId }}</code></span><span v-if="selectedLog.sessionId">会话 <code>{{ selectedLog.sessionId }}</code></span><span>宿主 {{ selectedLog.durationMs }} ms · 上游 {{ selectedAttemptDuration }} ms · {{ new Date(selectedLog.createdAt).toLocaleString() }}</span><NTag v-if="selectedLog.cancelled" type="warning" size="small" round>调用方已取消</NTag><NButton v-if="selectedLog.sessionId" size="tiny" secondary type="warning" :loading="releasingSession" @click="releaseAffinity">更换代理</NButton></div>
       <NEmpty v-if="!selectedAttempts.length" :description="emptyAttemptHint" />
       <div v-else class="request-attempt-list" role="list">
         <div class="request-attempt-list-header" aria-hidden="true"><span>尝试</span><span>代理</span><span>状态</span><span>结果</span><span>耗时</span></div>

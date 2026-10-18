@@ -52,6 +52,7 @@ public sealed class RequestLogStore(SqlSugarDatabase database) : ILogSink<Reques
             AttemptDetailsJson = item.AttemptDetails.Count == 0
                 ? null
                 : JsonSerializer.Serialize(item.AttemptDetails),
+            SessionId = item.SessionId,
             CreatedAtUtc = item.CreatedAt.UtcDateTime
         }).ExecuteCommand();
         return Task.CompletedTask;
@@ -97,6 +98,7 @@ public sealed class RequestLogStore(SqlSugarDatabase database) : ILogSink<Reques
                 DurationMs = item.DurationMs,
                 TtfbMs = item.TtfbMs,
                 CreatedAt = new DateTimeOffset(item.CreatedAtUtc, TimeSpan.Zero),
+                SessionId = item.SessionId,
                 Usage = item.UsageJson is null ? null : JsonSerializer.Deserialize<Usage>(item.UsageJson),
                 AttemptDetails = DeserializeAttemptDetails(item.AttemptDetailsJson)
             })

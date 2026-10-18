@@ -171,6 +171,9 @@ public sealed class RequestLogEntity
     [SugarColumn(ColumnDataType = "text", IsNullable = true)]
     public string? AttemptDetailsJson { get; set; }
 
+    [SugarColumn(Length = 256, IsNullable = true)]
+    public string? SessionId { get; set; }
+
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 

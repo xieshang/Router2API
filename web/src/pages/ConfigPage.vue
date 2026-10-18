@@ -24,6 +24,7 @@ const form = reactive({
   proxySessionAffinityEnabled: false,
   proxySessionAffinityTtlMinutes: 30,
   proxyPreferHighScore: true,
+  proxyAllowDirectFallback: true,
 })
 
 watch(() => query.data.value, value => {
@@ -41,6 +42,7 @@ watch(() => query.data.value, value => {
   form.proxySessionAffinityEnabled = value.proxy.sessionAffinityEnabled
   form.proxySessionAffinityTtlMinutes = value.proxy.sessionAffinityTtlMinutes
   form.proxyPreferHighScore = value.proxy.preferHighScore
+  form.proxyAllowDirectFallback = value.proxy.allowDirectFallback
 }, { immediate: true })
 
 async function save() {
@@ -60,6 +62,7 @@ async function save() {
         sessionAffinityEnabled: form.proxySessionAffinityEnabled,
         sessionAffinityTtlMinutes: form.proxySessionAffinityTtlMinutes,
         preferHighScore: form.proxyPreferHighScore,
+        allowDirectFallback: form.proxyAllowDirectFallback,
       },
     })
     form.apiKey = ''
@@ -167,7 +170,11 @@ async function refreshProtocols() {
           <NFormItem label="优选指数优先">
             <NSwitch v-model:value="form.proxyPreferHighScore"><template #checked>启用</template><template #unchecked>停用</template></NSwitch>
           </NFormItem>
+          <NFormItem label="直连兜底">
+            <NSwitch v-model:value="form.proxyAllowDirectFallback"><template #checked>启用</template><template #unchecked>严格禁直连</template></NSwitch>
+          </NFormItem>
           <p class="field-help">失败阈值 0 表示不自动停用；黏连按请求头 x-session-id 识别；优选指数开启后按探测合成分（延时/速度）全局优先，关闭则保持随机抽样。会话黏连需要 Redis。</p>
+          <p class="field-help">关闭「直连兜底」= 严格禁直连：没有可用代理出口时，模型目录与对话请求直接失败，绝不绕过代理池直连上游。</p>
         </NCard>
 
         <NCard title="模型协议目录" :bordered="false" class="settings-card config-card">

@@ -2,9 +2,11 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using FluentAssertions;
+using Microsoft.Extensions.Options;
 using Moq;
 using Router.Contracts.Domain;
 using Router.Contracts.Host;
+using Router.Infrastructure.Persistence;
 using Router.Infrastructure.Services;
 
 namespace Router.Tests;
@@ -224,6 +226,28 @@ public sealed class ProxyPoolHttpClientFactoryTests : IDisposable
     }
 
     [TestMethod]
+    public async Task HostStrictModeOverridesCallerDirectFallback()
+    {
+        // 宿主 Proxy.AllowDirectFallback=false 时，调用方即便显式允许直连也必须 fail-closed。
+        var pool = CreatePool([], StrictHost());
+        var act = () => pool.CreateClientAsync(new ProxyPoolHttpClientOptions { AllowDirectFallback = true });
+
+        await act.Should().ThrowAsync<ProxyPoolUnavailableException>();
+    }
+
+    [TestMethod]
+    public async Task HostDefaultModeStillHonorsCallerOptIn()
+    {
+        await using var server = new TestServer("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\ndirect");
+        var pool = CreatePool([], OptionsMonitor(new ProxyOptions()));
+        using var response = await pool.SendAsync(
+            () => new HttpRequestMessage(HttpMethod.Get, $"http://127.0.0.1:{server.Port}/"),
+            new ProxyPoolHttpClientOptions { AllowDirectFallback = true });
+
+        (await response.Content.ReadAsStringAsync()).Should().Be("direct");
+    }
+
+    [TestMethod]
     public async Task DefaultTransportDoesNotFollowRedirects()
     {
         await using var server = new TestServer(
@@ -297,11 +321,24 @@ public sealed class ProxyPoolHttpClientFactoryTests : IDisposable
         return subscriptions.Object;
     }
 
-    private ProxyPoolHttpClientFactory CreatePool(ProxyEndpoint[] proxies)
+    private ProxyPoolHttpClientFactory CreatePool(
+        ProxyEndpoint[] proxies,
+        IOptionsMonitor<ProxyOptions>? proxyOptions = null)
     {
         var nodes = new Mock<IProxyStore>();
         nodes.Setup(store => store.ListAsync(It.IsAny<CancellationToken>())).ReturnsAsync(proxies);
-        return new ProxyPoolHttpClientFactory(nodes.Object, Subscriptions(), _transport, _resilience);
+        return new ProxyPoolHttpClientFactory(
+            nodes.Object, Subscriptions(), _transport, _resilience, proxyOptions: proxyOptions);
+    }
+
+    private static IOptionsMonitor<ProxyOptions> StrictHost()
+        => OptionsMonitor(new ProxyOptions { AllowDirectFallback = false });
+
+    private static IOptionsMonitor<ProxyOptions> OptionsMonitor(ProxyOptions options)
+    {
+        var monitor = new Mock<IOptionsMonitor<ProxyOptions>>();
+        monitor.SetupGet(value => value.CurrentValue).Returns(options);
+        return monitor.Object;
     }
 
     private static int UnusedPort()

@@ -9,6 +9,7 @@ using Router.Host.Pipeline;
 using Router.Host.Plugins;
 using Router.Host.Security;
 using Router.Host.Tracing;
+using Router.Infrastructure.Services;
 
 namespace Router.Host.Api;
 
@@ -54,6 +55,7 @@ public static class ApiEndpoints
         app.MapPost("/api/admin/proxies", SaveProxyAsync);
         app.MapDelete("/api/admin/proxies/{id}", DeleteProxyAsync);
         app.MapPost("/api/admin/proxies/{id}/probe", ProbeProxyAsync);
+        app.MapPost("/api/admin/proxy-affinity/{sessionId}/release", ReleaseProxyAffinityAsync);
         app.MapGet("/api/admin/proxy-subscriptions", ListSubscriptionsAsync);
         app.MapPost("/api/admin/proxy-subscriptions", SaveSubscriptionAsync);
         app.MapDelete("/api/admin/proxy-subscriptions/{id}", DeleteSubscriptionAsync);
@@ -407,6 +409,37 @@ public static class ApiEndpoints
         var proxy = await proxies.GetAsync(id, cancellationToken);
         if (proxy is null) return Results.NotFound();
         return Results.Ok(await probe.ProbeAsync(proxy, cancellationToken));
+    }
+
+    /// <summary>
+    /// 清除会话黏连：删除该会话在各平台插件下的代理黏连键，让下一次请求重新选择代理节点。
+    /// </summary>
+    private static async Task<IResult> ReleaseProxyAffinityAsync(
+        string sessionId,
+        IPlatformRegistry registry,
+        ISharedKeyValueStore store,
+        ILoggerFactory loggerFactory,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId)) return Results.BadRequest(new { error = "sessionId is required" });
+
+        // 会话黏连键按插件命名空间隔离（proxy-affinity:{pluginKey}:{sessionId}），逐个平台清理。
+        var removed = 0;
+        foreach (var pluginKey in registry.All.Select(registration => registration.PluginKey).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                await store.RemoveAsync(ProxyAffinity.AffinityKey(pluginKey, sessionId), cancellationToken);
+                removed++;
+            }
+            catch (Exception exception)
+            {
+                loggerFactory.CreateLogger("Router.Host.Api.ApiEndpoints")
+                    .LogWarning(exception, "proxy affinity release failed pluginKey={PluginKey} session={SessionId}", pluginKey, sessionId);
+            }
+        }
+
+        return Results.Ok(new { sessionId, released = removed });
     }
 
     private static async Task<IResult> ListSubscriptionsAsync(

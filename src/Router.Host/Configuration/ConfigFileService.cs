@@ -63,7 +63,8 @@ public sealed class ConfigFileService(
                 proxy.CurrentValue.ConsecutiveFailureThreshold,
                 proxy.CurrentValue.SessionAffinityEnabled,
                 proxy.CurrentValue.SessionAffinityTtlMinutes,
-                proxy.CurrentValue.PreferHighScore));
+                proxy.CurrentValue.PreferHighScore,
+                proxy.CurrentValue.AllowDirectFallback));
 
     public void EnsureCreated()
     {
@@ -151,6 +152,7 @@ public sealed class ConfigFileService(
             if (proxyUpdate.SessionAffinityEnabled is { } affinityEnabled) proxyNode["SessionAffinityEnabled"] = affinityEnabled;
             if (proxyUpdate.SessionAffinityTtlMinutes is { } affinityTtl) proxyNode["SessionAffinityTtlMinutes"] = affinityTtl;
             if (proxyUpdate.PreferHighScore is { } preferHighScore) proxyNode["PreferHighScore"] = preferHighScore;
+            if (proxyUpdate.AllowDirectFallback is { } allowDirectFallback) proxyNode["AllowDirectFallback"] = allowDirectFallback;
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
@@ -188,7 +190,8 @@ public sealed class ConfigFileService(
                 ["ConsecutiveFailureThreshold"] = proxy.CurrentValue.ConsecutiveFailureThreshold,
                 ["SessionAffinityEnabled"] = proxy.CurrentValue.SessionAffinityEnabled,
                 ["SessionAffinityTtlMinutes"] = proxy.CurrentValue.SessionAffinityTtlMinutes,
-                ["PreferHighScore"] = proxy.CurrentValue.PreferHighScore
+                ["PreferHighScore"] = proxy.CurrentValue.PreferHighScore,
+                ["AllowDirectFallback"] = proxy.CurrentValue.AllowDirectFallback
             }
         };
 
@@ -255,7 +258,8 @@ public sealed record ConfigProxySnapshot(
     int ConsecutiveFailureThreshold,
     bool SessionAffinityEnabled,
     int SessionAffinityTtlMinutes,
-    bool PreferHighScore);
+    bool PreferHighScore,
+    bool AllowDirectFallback);
 
 public sealed class ConfigUpdateRequest
 {
@@ -303,4 +307,6 @@ public sealed class ConfigProxyUpdate
     public bool? SessionAffinityEnabled { get; init; }
     public int? SessionAffinityTtlMinutes { get; init; }
     public bool? PreferHighScore { get; init; }
+    /// <summary>是否允许无代理出口时直连；null 表示不修改。false = 严格禁直连。</summary>
+    public bool? AllowDirectFallback { get; init; }
 }
