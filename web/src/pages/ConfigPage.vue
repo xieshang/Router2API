@@ -20,6 +20,10 @@ const form = reactive({
   dataRetentionDays: 30,
   cleanupCron: '0 0 3 * * *',
   minimumPluginLogLevel: 'Information',
+  proxyConsecutiveFailureThreshold: 5,
+  proxySessionAffinityEnabled: false,
+  proxySessionAffinityTtlMinutes: 30,
+  proxyPreferHighScore: true,
 })
 
 watch(() => query.data.value, value => {
@@ -33,6 +37,10 @@ watch(() => query.data.value, value => {
   form.dataRetentionDays = value.logging.dataRetentionDays
   form.cleanupCron = value.logging.cleanupCron
   form.minimumPluginLogLevel = value.logging.minimumPluginLogLevel
+  form.proxyConsecutiveFailureThreshold = value.proxy.consecutiveFailureThreshold
+  form.proxySessionAffinityEnabled = value.proxy.sessionAffinityEnabled
+  form.proxySessionAffinityTtlMinutes = value.proxy.sessionAffinityTtlMinutes
+  form.proxyPreferHighScore = value.proxy.preferHighScore
 }, { immediate: true })
 
 async function save() {
@@ -47,6 +55,12 @@ async function save() {
       database: { path: form.databasePath.trim() },
       redis: { connectionString: form.redisConnectionString.trim(), instanceName: form.redisInstanceName },
       logging: { dataRetentionDays: form.dataRetentionDays, cleanupCron: form.cleanupCron.trim(), minimumPluginLogLevel: form.minimumPluginLogLevel },
+      proxy: {
+        consecutiveFailureThreshold: form.proxyConsecutiveFailureThreshold,
+        sessionAffinityEnabled: form.proxySessionAffinityEnabled,
+        sessionAffinityTtlMinutes: form.proxySessionAffinityTtlMinutes,
+        preferHighScore: form.proxyPreferHighScore,
+      },
     })
     form.apiKey = ''
     await query.refetch()
@@ -137,6 +151,23 @@ async function refreshProtocols() {
             <NInput v-model:value="form.redisInstanceName" />
           </NFormItem>
           <p class="field-help">Redis 保存代理策略、账号冷却、插件短期缓存和任务锁。</p>
+        </NCard>
+
+        <NCard title="代理池" :bordered="false" class="settings-card config-card">
+          <template #header-extra><span class="config-kicker">PROXY</span></template>
+          <NFormItem label="连续失败自动停用阈值">
+            <NInputNumber v-model:value="form.proxyConsecutiveFailureThreshold" :min="0" :max="100" />
+          </NFormItem>
+          <NFormItem label="会话黏连">
+            <NSwitch v-model:value="form.proxySessionAffinityEnabled"><template #checked>启用</template><template #unchecked>停用</template></NSwitch>
+          </NFormItem>
+          <NFormItem label="会话黏连时长（分钟）">
+            <NInputNumber v-model:value="form.proxySessionAffinityTtlMinutes" :min="1" :max="1440" />
+          </NFormItem>
+          <NFormItem label="优选指数优先">
+            <NSwitch v-model:value="form.proxyPreferHighScore"><template #checked>启用</template><template #unchecked>停用</template></NSwitch>
+          </NFormItem>
+          <p class="field-help">失败阈值 0 表示不自动停用；黏连按请求头 x-session-id 识别；优选指数开启后按探测合成分（延时/速度）全局优先，关闭则保持随机抽样。会话黏连需要 Redis。</p>
         </NCard>
 
         <NCard title="模型协议目录" :bordered="false" class="settings-card config-card">

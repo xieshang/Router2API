@@ -68,6 +68,7 @@ builder.Services.AddHostedService<ModelMetadataWarmupHostedService>();
 builder.Services.AddSingleton<ProxySubscriptionRefreshHostedService>();
 builder.Services.AddSingleton<IProxySubscriptionRefreshQueue>(sp => sp.GetRequiredService<ProxySubscriptionRefreshHostedService>());
 builder.Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<ProxySubscriptionRefreshHostedService>());
+builder.Services.AddHostedService<ProxyProbeHostedService>();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("v1", policy => policy

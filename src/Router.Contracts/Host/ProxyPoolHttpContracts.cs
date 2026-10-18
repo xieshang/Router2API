@@ -31,6 +31,8 @@ public sealed record ProxyPoolHttpClientOptions
 {
     /// <summary>限定节点来源 ID；空值或空列表表示所有启用订阅及手动节点，"manual" 表示手动节点。指定其他订阅时不包含手动节点。</summary>
     public IReadOnlyList<string>? SubscriptionIds { get; init; }
+    /// <summary>会话黏连标识；同一标识在 TTL 内复用同一节点（空表示不黏连）。</summary>
+    public string? SessionId { get; init; }
     /// <summary>选不到代理时是否允许直连；默认拒绝直连。</summary>
     public bool AllowDirectFallback { get; init; }
     /// <summary>是否允许底层自动重定向；JS 宿主桥接必须保持关闭。</summary>

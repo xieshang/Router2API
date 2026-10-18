@@ -27,6 +27,7 @@ public sealed class ConfigFileService(
     IOptionsMonitor<RedisOptions> redis,
     IOptionsMonitor<LogRetentionOptions> retention,
     IOptionsMonitor<PluginLogOptions> pluginLogs,
+    IOptionsMonitor<ProxyOptions> proxy,
     ApiKeyService apiKeys,
     ILogger<ConfigFileService> logger) : IConfigFileService
 {
@@ -57,7 +58,12 @@ public sealed class ConfigFileService(
             new ConfigLoggingSnapshot(
                 retention.CurrentValue.DataRetentionDays,
                 retention.CurrentValue.CleanupCron,
-                pluginLogs.CurrentValue.MinimumPluginLogLevel));
+                pluginLogs.CurrentValue.MinimumPluginLogLevel),
+            new ConfigProxySnapshot(
+                proxy.CurrentValue.ConsecutiveFailureThreshold,
+                proxy.CurrentValue.SessionAffinityEnabled,
+                proxy.CurrentValue.SessionAffinityTtlMinutes,
+                proxy.CurrentValue.PreferHighScore));
 
     public void EnsureCreated()
     {
@@ -92,6 +98,14 @@ public sealed class ConfigFileService(
                 throw new ArgumentException("日志清理 Cron 不能为空。", nameof(request));
             if (!PluginLogOptions.IsSupportedLevel(request.Logging.MinimumPluginLogLevel))
                 throw new ArgumentException("插件日志最低等级只能是 Debug、Information、Warning 或 Error。", nameof(request));
+        }
+
+        if (request.Proxy is not null)
+        {
+            if (request.Proxy.ConsecutiveFailureThreshold is < 0 or > 100)
+                throw new ArgumentOutOfRangeException(nameof(request), "代理连续失败阈值必须在 0 到 100 之间（0 表示不自动停用）。");
+            if (request.Proxy.SessionAffinityTtlMinutes is < 1 or > 1440)
+                throw new ArgumentOutOfRangeException(nameof(request), "会话黏连时长必须在 1 到 1440 分钟之间。");
         }
 
         var root = ReadDocument();
@@ -130,6 +144,15 @@ public sealed class ConfigFileService(
             loggingNode["MinimumPluginLogLevel"] = loggingUpdate.MinimumPluginLogLevel;
         }
 
+        if (request.Proxy is { } proxyUpdate)
+        {
+            var proxyNode = GetOrCreateObject(root, "Proxy");
+            if (proxyUpdate.ConsecutiveFailureThreshold is { } threshold) proxyNode["ConsecutiveFailureThreshold"] = threshold;
+            if (proxyUpdate.SessionAffinityEnabled is { } affinityEnabled) proxyNode["SessionAffinityEnabled"] = affinityEnabled;
+            if (proxyUpdate.SessionAffinityTtlMinutes is { } affinityTtl) proxyNode["SessionAffinityTtlMinutes"] = affinityTtl;
+            if (proxyUpdate.PreferHighScore is { } preferHighScore) proxyNode["PreferHighScore"] = preferHighScore;
+        }
+
         Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
         WriteJson(root);
         ReloadConfiguration();
@@ -159,6 +182,13 @@ public sealed class ConfigFileService(
                 ["DataRetentionDays"] = retention.CurrentValue.DataRetentionDays,
                 ["CleanupCron"] = retention.CurrentValue.CleanupCron,
                 ["MinimumPluginLogLevel"] = pluginLogs.CurrentValue.MinimumPluginLogLevel
+            },
+            ["Proxy"] = new JsonObject
+            {
+                ["ConsecutiveFailureThreshold"] = proxy.CurrentValue.ConsecutiveFailureThreshold,
+                ["SessionAffinityEnabled"] = proxy.CurrentValue.SessionAffinityEnabled,
+                ["SessionAffinityTtlMinutes"] = proxy.CurrentValue.SessionAffinityTtlMinutes,
+                ["PreferHighScore"] = proxy.CurrentValue.PreferHighScore
             }
         };
 
@@ -204,7 +234,8 @@ public sealed record ConfigSnapshot(
     ConfigAuthSnapshot Auth,
     ConfigDatabaseSnapshot Database,
     ConfigRedisSnapshot Redis,
-    ConfigLoggingSnapshot Logging);
+    ConfigLoggingSnapshot Logging,
+    ConfigProxySnapshot Proxy);
 
 public sealed record ConfigAuthSnapshot(
     bool AdminEnabled,
@@ -220,12 +251,19 @@ public sealed record ConfigRedisSnapshot(string ConnectionString, string Instanc
 
 public sealed record ConfigLoggingSnapshot(int DataRetentionDays, string CleanupCron, string MinimumPluginLogLevel);
 
+public sealed record ConfigProxySnapshot(
+    int ConsecutiveFailureThreshold,
+    bool SessionAffinityEnabled,
+    int SessionAffinityTtlMinutes,
+    bool PreferHighScore);
+
 public sealed class ConfigUpdateRequest
 {
     public ConfigAuthUpdate? Auth { get; init; }
     public ConfigDatabaseUpdate? Database { get; init; }
     public ConfigRedisUpdate? Redis { get; init; }
     public ConfigLoggingUpdate? Logging { get; init; }
+    public ConfigProxyUpdate? Proxy { get; init; }
 }
 
 public sealed class ConfigAuthUpdate
@@ -257,4 +295,12 @@ public sealed class ConfigLoggingUpdate
     public int DataRetentionDays { get; init; } = 30;
     public string CleanupCron { get; init; } = "0 0 3 * * *";
     public string MinimumPluginLogLevel { get; init; } = "Information";
+}
+
+public sealed class ConfigProxyUpdate
+{
+    public int? ConsecutiveFailureThreshold { get; init; }
+    public bool? SessionAffinityEnabled { get; init; }
+    public int? SessionAffinityTtlMinutes { get; init; }
+    public bool? PreferHighScore { get; init; }
 }

@@ -41,6 +41,7 @@ export interface ProxyEndpoint {
   averageLatencyMs: number
   averageSpeedBytesPerSecond: number
   compositeScore: number
+  consecutiveFailures: number
   lastProbeAt: string | null
   probeStatus: string
   probeError?: string | null
@@ -119,8 +120,9 @@ export interface ConfigSnapshot {
   database: { path: string }
   redis: { connectionString: string; instanceName: string }
   logging: { dataRetentionDays: number; cleanupCron: string; minimumPluginLogLevel: string }
+  proxy: { consecutiveFailureThreshold: number; sessionAffinityEnabled: boolean; sessionAffinityTtlMinutes: number; preferHighScore: boolean }
 }
-export interface AnalyticsBucket { startUtc: string; requests: number; successes: number; failures: number; tokens: number; averageLatencyMs: number; p95LatencyMs: number }
+export interface AnalyticsBucket { startUtc: string; requests: number; successes: number; failures: number; tokens: number; averageLatencyMs: number; p95LatencyMs: number; successesByModel?: Record<string, number> }
 export interface AnalyticsReport { fromUtc: string; toUtc: string; requests: number; successes: number; failures: number; tokens: number; averageLatencyMs: number; p95LatencyMs: number; buckets: AnalyticsBucket[]; byPlatform: Record<string, number> }
 
 export class ApiError extends Error {
@@ -152,7 +154,7 @@ function normalizeAccount(value: unknown): Account {
 
 function normalizeProxy(value: unknown): ProxyEndpoint {
   const raw = asObject(value); const status = asObject(pick(raw, 'status')); const state = enumName(pick(raw, 'state')) ?? enumName(pick(status, 'state')) ?? 'Active'
-  return { id: asString(pick(raw, 'id')) ?? '', subscriptionId: asString(pick(raw, 'subscriptionId', 'subscription_id')) ?? '', scheme: asString(pick(raw, 'scheme')) ?? 'http', host: asString(pick(raw, 'host')) ?? '', port: asNumber(pick(raw, 'port')) ?? 0, enabled: asBoolean(pick(raw, 'enabled')) ?? isActive(state), state, latencyMs: asNumber(pick(raw, 'latencyMs')) ?? 0, averageLatencyMs: asNumber(pick(raw, 'averageLatencyMs', 'avgLatencyMs')) ?? 0, averageSpeedBytesPerSecond: asNumber(pick(raw, 'averageSpeedBytesPerSecond')) ?? 0, compositeScore: asNumber(pick(raw, 'compositeScore')) ?? 0, lastProbeAt: asString(pick(raw, 'lastProbeAt', 'lastProbedAt')), probeStatus: asString(pick(raw, 'probeStatus')) ?? 'Unknown', probeConfigurationVersion: asNumber(pick(raw, 'probeConfigurationVersion')) ?? 0 }
+  return { id: asString(pick(raw, 'id')) ?? '', subscriptionId: asString(pick(raw, 'subscriptionId', 'subscription_id')) ?? '', scheme: asString(pick(raw, 'scheme')) ?? 'http', host: asString(pick(raw, 'host')) ?? '', port: asNumber(pick(raw, 'port')) ?? 0, enabled: asBoolean(pick(raw, 'enabled')) ?? isActive(state), state, latencyMs: asNumber(pick(raw, 'latencyMs')) ?? 0, averageLatencyMs: asNumber(pick(raw, 'averageLatencyMs', 'avgLatencyMs')) ?? 0, averageSpeedBytesPerSecond: asNumber(pick(raw, 'averageSpeedBytesPerSecond')) ?? 0, compositeScore: asNumber(pick(raw, 'compositeScore')) ?? 0, consecutiveFailures: asNumber(pick(raw, 'consecutiveFailures')) ?? 0, lastProbeAt: asString(pick(raw, 'lastProbeAt', 'lastProbedAt')), probeStatus: asString(pick(raw, 'probeStatus')) ?? 'Unknown', probeConfigurationVersion: asNumber(pick(raw, 'probeConfigurationVersion')) ?? 0 }
 }
 
 function normalizeSubscription(value: unknown): ProxySubscription {

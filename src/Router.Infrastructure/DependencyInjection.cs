@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Router.Contracts.Host;
@@ -23,6 +25,9 @@ public static class DependencyInjection
             .Bind(configuration.GetSection("Plugins:Execution"))
             .Validate(options => options.IsValid(), "Plugin execution budgets must be positive, finite and at most one day.")
             .ValidateOnStart();
+        services.AddOptions<ProxyOptions>()
+            .Bind(configuration.GetSection("Proxy"))
+            .ValidateOnStart();
 
         services.AddSingleton<SqlSugarDatabase>();
         services.AddSingleton<DatabaseInitializer>();
@@ -38,7 +43,16 @@ public static class DependencyInjection
         services.AddSingleton<PluginHttpOriginStore>();
         services.AddSingleton<PluginResiliencePipelines>();
         services.AddSingleton<IProxyHttpClientFactory, ProxyHttpClientFactory>();
-        services.AddSingleton<IProxyPoolHttpClientFactory, ProxyPoolHttpClientFactory>();
+        services.AddSingleton<ProxyNodeHealthTracker>();
+        services.AddSingleton(sp => new ProxyPoolHttpClientFactory(
+            sp.GetRequiredService<IProxyStore>(),
+            sp.GetRequiredService<IProxySubscriptionService>(),
+            sp.GetRequiredService<ProxyTransportFactory>(),
+            sp.GetRequiredService<PluginResiliencePipelines>(),
+            sp.GetRequiredService<ISharedKeyValueStore>(),
+            sp.GetRequiredService<IOptionsMonitor<ProxyOptions>>(),
+            sp.GetRequiredService<ILogger<ProxyPoolHttpClientFactory>>()));
+        services.AddSingleton<IProxyPoolHttpClientFactory>(sp => sp.GetRequiredService<ProxyPoolHttpClientFactory>());
         services.AddSingleton<IPluginAttemptExecutor, PluginAttemptExecutor>();
         services.AddSingleton<IPluginPolicyRegistry, PluginPolicyRegistry>();
         services.AddSingleton<IPlatformRegistry, PlatformRegistry>();

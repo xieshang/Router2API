@@ -552,7 +552,7 @@ public sealed class JsCapabilityParityTests
             http.Setup(value => value.CreateDirectClient("upstream")).Returns(() => new HttpClient(_handler, disposeHandler: false));
             var executor = new PluginAttemptExecutor(Accounts, Mock.Of<IProxyStore>(), Mock.Of<IProxySubscriptionService>(), new ResourceLeaseManager(),
                 Mock.Of<IProxyPolicyStore>(), Shared, http.Object, policies, Mock.Of<IModelMetadataCatalog>(), Logs.Object,
-                NullLogger<PluginAttemptExecutor>.Instance, resilience, Options.Create(new PluginExecutionOptions()));
+                NullLogger<PluginAttemptExecutor>.Instance, resilience, Options.Create(new PluginExecutionOptions()), ProxyNodeHealthTrackers.Create(), Options.Create(new ProxyOptions()));
             return await executor.ExecuteAsync("api", "api", terminal, request, "parity", null);
         }
 
@@ -573,3 +573,4 @@ public sealed class JsCapabilityParityTests
         }
     }
 }
+

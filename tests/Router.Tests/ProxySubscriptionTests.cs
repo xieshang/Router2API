@@ -144,6 +144,83 @@ public sealed class ProxySubscriptionTests
         }
     }
 
+    [TestMethod]
+    public async Task RefreshAcceptsProxyPoolFeedAndSkipsNonHttpProtocols()
+    {
+        var directory = Path.Combine(AppContext.BaseDirectory, "test-data");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, $"router2api-{Guid.NewGuid():N}.db");
+        var database = new SqlSugarDatabase(
+            Options.Create(new DatabaseOptions { Path = path }),
+            NullLogger<SqlSugarDatabase>.Instance);
+
+        try
+        {
+            new DatabaseInitializer(database, NullLogger<DatabaseInitializer>.Instance).Initialize();
+            var store = new ProxyStore(database);
+            var probes = new Mock<IProxyProbeService>();
+            probes
+                .Setup(item => item.ProbeAsync(It.IsAny<ProxyEndpoint>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ProxyProbeResult(true, 20, 10_000, "Healthy"));
+            var service = new ProxySubscriptionService(
+                database,
+                store,
+                new StaticHttpClientFactory("""
+                    # proxy pool feed: mixed protocols, placeholder credentials, duplicates
+                    https://freeuser1:freeuser1@ma1-gb.example.link:9251
+                    https://null:null@138.199.35.197:9002
+                    http://62.90.77.30:443
+                    socks5://67.207.92.87:1088
+                    http://62.90.77.30:443
+                    vless://d0d0d0d0-1111-2222-3333-444455556666@example.link:443?security=reality#pool
+                    vmess://eyJ2IjoiMiIsInBzIjoicG9vbCJ9
+                    ss://YWVzLTI1Ni1nY206cGFzcw==@example.link:8388#pool
+                    trojan://secret@example.link:443#pool
+                    hysteria2://secret@example.link:8443#pool
+                    anytls://secret@example.link:443#pool
+                    """),
+                probes.Object);
+
+            await service.SaveAsync(new ProxySubscription
+            {
+                Id = "subscription-pool",
+                Name = "proxy pool",
+                Url = "http://192.168.1.210:8001/c/?token=test&client=none",
+                RefreshIntervalMinutes = 60
+            });
+
+            var result = await service.RefreshAsync("subscription-pool");
+
+            // 4 个可用的 HTTP/SOCKS 节点（重复行去掉一个），其余协议全部跳过。
+            result.Added.Should().Be(4);
+            var proxies = await store.ListAsync();
+            proxies.Should().HaveCount(4);
+            proxies.Should().OnlyContain(proxy =>
+                proxy.Scheme == ProxyScheme.Http
+                || proxy.Scheme == ProxyScheme.Https
+                || proxy.Scheme == ProxyScheme.Socks5);
+            proxies.Should().ContainSingle(proxy => proxy.Port == 1088 && proxy.Scheme == ProxyScheme.Socks5);
+            proxies.Should().ContainSingle(proxy => proxy.Port == 9251 && proxy.Username == "freeuser1");
+            proxies.Should().ContainSingle(proxy =>
+                proxy.Port == 9002 && proxy.Username == null && proxy.Password == null);
+            proxies.Should().NotContain(proxy => proxy.Username == "d0d0d0d0-1111-2222-3333-444455556666");
+            proxies.Should().NotContain(proxy => proxy.Password == "secret");
+        }
+        finally
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            try
+            {
+                if (File.Exists(path)) File.Delete(path);
+            }
+            catch (IOException)
+            {
+                // best effort cleanup
+            }
+        }
+    }
+
     private sealed class StaticHttpClientFactory(string body) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name)

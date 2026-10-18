@@ -3,12 +3,14 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 using Router.Contracts.Domain;
 using Router.Contracts.Host;
 using Router.Contracts.Pipeline;
 using Router.Contracts.Plugins;
 using Router.Host.Plugins;
+using Router.Infrastructure.Persistence;
 using Router.Infrastructure.Services;
 
 namespace Router.Tests;
@@ -140,7 +142,7 @@ public sealed class PluginStreamingExecutionTests : IDisposable
         return new PluginAttemptExecutor(accounts.Object, Mock.Of<IProxyStore>(), Mock.Of<IProxySubscriptionService>(),
             new ResourceLeaseManager(), Mock.Of<IProxyPolicyStore>(), Mock.Of<ISharedKeyValueStore>(), factory.Object,
             policies, Mock.Of<IModelMetadataCatalog>(), Mock.Of<IPluginLogSink>(), NullLogger<PluginAttemptExecutor>.Instance,
-            _resilience, Microsoft.Extensions.Options.Options.Create(new PluginExecutionOptions()));
+            _resilience, Microsoft.Extensions.Options.Options.Create(new PluginExecutionOptions()), ProxyNodeHealthTrackers.Create(), Options.Create(new ProxyOptions()));
     }
 
     private static Account Account() => new() { Id = "account", PluginKey = "test", Platform = "test" };
@@ -188,3 +190,4 @@ public sealed class PluginStreamingExecutionTests : IDisposable
         protected override void Dispose(bool disposing) { if (disposing) Disposed = true; base.Dispose(disposing); }
     }
 }
+

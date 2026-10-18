@@ -13,7 +13,15 @@ public sealed class ProxySubscriptionService(
     IHttpClientFactory httpClientFactory,
     IProxyProbeService probes) : IProxySubscriptionService, IDisposable
 {
+    /// <summary>传输层真正支持的代理协议；其余协议（vless/vmess/ss/trojan/hy2 等）不能当 HTTP 代理用，必须跳过。</summary>
+    private static readonly HashSet<string> SupportedSchemes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "http", "https", "socks", "socks5", "socks5h", "s5"
+    };
+
     private const int MaxConcurrentProbes = 6;
+    /// <summary>探测结果的有效期；到期后订阅刷新会重新探测，避免死节点一直顶着旧分数。</summary>
+    internal static readonly TimeSpan ProbeRefreshInterval = TimeSpan.FromHours(2);
     private readonly SemaphoreSlim _probeGate = new(MaxConcurrentProbes, MaxConcurrentProbes);
 
     public void Dispose() => _probeGate.Dispose();
@@ -72,9 +80,16 @@ public sealed class ProxySubscriptionService(
             .GetAsync(subscription.Url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        var parsed = ParseLines(body, subscription).ToArray();
+        // 订阅源可能重复给出同一节点，按 EndpointKey 去重，避免 ToDictionary 抛重复键。
+        var parsed = ParseLines(body, subscription)
+            .GroupBy(proxy => proxy.EndpointKey)
+            .Select(group => group.First())
+            .ToArray();
         var existing = await proxyStore.ListAsync(cancellationToken);
-        var current = existing.Where(x => x.SubscriptionId == id).ToDictionary(x => x.EndpointKey);
+        var current = existing
+            .Where(x => x.SubscriptionId == id)
+            .GroupBy(x => x.EndpointKey)
+            .ToDictionary(group => group.Key, group => group.OrderByDescending(item => item.LastSeenInSubscriptionAt).First());
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var added = 0;
         var updated = 0;
@@ -116,7 +131,8 @@ public sealed class ProxySubscriptionService(
                     proxy.ProbeError = previous.ProbeError;
                     proxy.ProbeStatus = previous.ProbeStatus;
                     proxy.ProbeConfigurationVersion = previous.ProbeConfigurationVersion;
-                    if (proxy.LastProbeAt is null)
+                    if (proxy.LastProbeAt is null
+                        || proxy.LastProbeAt < DateTimeOffset.UtcNow - ProbeRefreshInterval)
                         probeQueue.Add(proxy);
                 }
                 proxy.LastSeenInSubscriptionAt = DateTimeOffset.UtcNow;
@@ -183,7 +199,7 @@ public sealed class ProxySubscriptionService(
 
     private static IEnumerable<ProxyEndpoint> ParseLines(string body, ProxySubscription subscription)
     {
-        foreach (var line in body.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        foreach (var line in NormalizeBody(body).Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             if (line.StartsWith('#')) continue;
             if (!TryParse(line, subscription, out var proxy)) continue;
@@ -198,6 +214,10 @@ public sealed class ProxySubscriptionService(
             && uri.Host.Length > 0
             && uri.Port > 0)
         {
+            // 代理池订阅常把 vless/vmess/ss/trojan 等节点混在同一个列表里，
+            // 这些协议没法当 HTTP 代理用，按显式 scheme 直接跳过，不要落成假节点。
+            if (!SupportedSchemes.Contains(uri.Scheme)) return false;
+
             var (username, password) = ParseUserInfo(uri.UserInfo);
             proxy = new ProxyEndpoint
             {
@@ -242,9 +262,39 @@ public sealed class ProxySubscriptionService(
         var separator = userInfo.IndexOf(':');
         var username = separator < 0 ? userInfo : userInfo[..separator];
         var password = separator < 0 ? null : userInfo[(separator + 1)..];
-        return (
-            Uri.UnescapeDataString(username),
-            password is null ? null : Uri.UnescapeDataString(password));
+        return (NormalizeCredential(username), NormalizeCredential(password));
+    }
+
+    private static string? NormalizeCredential(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || value.Equals("null", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("none", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        return Uri.UnescapeDataString(value);
+    }
+
+    /// <summary>
+    /// 代理池/机场订阅有两种下发形态：逐行 http(s)/socks5 URI，或整段 base64 包裹的订阅内容。
+    /// 这里只做最小归一化：正文里看不到任何 URI 时才尝试 base64 解码，避免误伤普通文本。
+    /// </summary>
+    private static string NormalizeBody(string body)
+    {
+        var trimmed = body.Trim();
+        if (trimmed.Length < 16 || trimmed.Contains("://", StringComparison.Ordinal)) return body;
+
+        var padded = trimmed.Replace('-', '+').Replace('_', '/');
+        padded = padded.PadRight(padded.Length + (4 - padded.Length % 4) % 4, '=');
+        try
+        {
+            var decoded = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(padded));
+            return decoded.Contains("://", StringComparison.Ordinal) ? decoded : body;
+        }
+        catch (FormatException)
+        {
+            return body;
+        }
     }
 
     private static ProxyScheme ParseScheme(string? value, ProxyScheme fallback)

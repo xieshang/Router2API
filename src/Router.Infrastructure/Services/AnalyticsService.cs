@@ -36,7 +36,8 @@ public sealed class AnalyticsService(SqlSugarDatabase database) : IAnalyticsServ
                 group.LongCount(row => !row.Success),
                 group.Sum(row => ReadTokens(row.UsageJson)),
                 group.Any() ? group.Average(row => row.DurationMs) : 0,
-                Percentile(group.Select(row => row.DurationMs), 0.95)))
+                Percentile(group.Select(row => row.DurationMs), 0.95),
+                SuccessesByModel(group)))
             .ToArray();
 
         var report = new AnalyticsReport(
@@ -51,6 +52,24 @@ public sealed class AnalyticsService(SqlSugarDatabase database) : IAnalyticsServ
             buckets,
             byPlatform);
         return Task.FromResult(report);
+    }
+
+    /// <summary>按模型统计桶内成功次数：失败不计入，空白模型归入空字符串键，按次数降序、名称升序稳定输出。</summary>
+    private static Dictionary<string, long> SuccessesByModel(IEnumerable<RequestLogEntity> rows)
+    {
+        var counts = new Dictionary<string, long>(StringComparer.Ordinal);
+        foreach (var row in rows)
+        {
+            if (!row.Success) continue;
+            var model = string.IsNullOrWhiteSpace(row.Model) ? string.Empty : row.Model;
+            counts.TryGetValue(model, out var current);
+            counts[model] = current + 1;
+        }
+
+        return counts
+            .OrderByDescending(pair => pair.Value)
+            .ThenBy(pair => pair.Key, StringComparer.Ordinal)
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
     }
 
     private static DateTime BucketStart(DateTime value, string bucket)

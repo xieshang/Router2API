@@ -1031,6 +1031,7 @@ public static class ApiEndpoints
             port = proxy.Port,
             scheme = proxy.Scheme.ToString(),
             state = proxy.Status.State.ToString(),
+            consecutiveFailures = proxy.Status.ConsecutiveFailures,
             latencyMs = proxy.LatencyMs,
             averageLatencyMs = proxy.AverageLatencyMs,
             averageSpeedBytesPerSecond = proxy.AverageSpeedBytesPerSecond,

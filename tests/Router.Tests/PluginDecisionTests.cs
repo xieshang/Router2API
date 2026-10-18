@@ -8,6 +8,7 @@ using Router.Contracts.Host;
 using Router.Contracts.Pipeline;
 using Router.Contracts.Plugins;
 using Router.Host.Plugins.JavaScript;
+using Router.Infrastructure.Persistence;
 using Router.Infrastructure.Services;
 
 namespace Router.Tests;
@@ -179,7 +180,7 @@ public sealed class PluginDecisionTests
             """, null, "{}"), PluginTestHost.Create("test"));
         var executor = new PluginAttemptExecutor(Accounts().Object, proxies.Object, subscriptions.Object, new ResourceLeaseManager(),
             reports.Object, Mock.Of<ISharedKeyValueStore>(), factory.Object, new PluginPolicyRegistry(), Mock.Of<IModelMetadataCatalog>(),
-            Mock.Of<IPluginLogSink>(), NullLogger<PluginAttemptExecutor>.Instance, resilience, Options.Create(new PluginExecutionOptions()));
+            Mock.Of<IPluginLogSink>(), NullLogger<PluginAttemptExecutor>.Instance, resilience, Options.Create(new PluginExecutionOptions()), ProxyNodeHealthTrackers.Create(), Options.Create(new ProxyOptions()));
         var result = await executor.ExecuteAsync("test", "test", terminal, Request(), "trace", Overrides());
         result.Attempt.Decision!.ProxyAction.Should().Be(transportFails ? PluginProxyAction.Cooldown : PluginProxyAction.None);
         result.Attempt.IsTransportFailure.Should().Be(transportFails);
@@ -229,7 +230,7 @@ public sealed class PluginDecisionTests
         => new(accounts.Object, Mock.Of<IProxyStore>(), Mock.Of<IProxySubscriptionService>(), new ResourceLeaseManager(),
             Mock.Of<IProxyPolicyStore>(), Mock.Of<ISharedKeyValueStore>(), HttpFactory().Object, policies,
             Mock.Of<IModelMetadataCatalog>(), Mock.Of<IPluginLogSink>(), NullLogger<PluginAttemptExecutor>.Instance,
-            resilience, Options.Create(new PluginExecutionOptions()));
+            resilience, Options.Create(new PluginExecutionOptions()), ProxyNodeHealthTrackers.Create(), Options.Create(new ProxyOptions()));
     private static async IAsyncEnumerable<StreamChunk> Body()
     {
         await Task.Yield();
@@ -253,3 +254,4 @@ public sealed class PluginDecisionTests
         protected override bool TryComputeLength(out long length) { length = 0; return false; }
     }
 }
+

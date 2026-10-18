@@ -7,6 +7,7 @@ using Router.Contracts.Domain;
 using Router.Contracts.Host;
 using Router.Contracts.Pipeline;
 using Router.Contracts.Plugins;
+using Router.Infrastructure.Persistence;
 
 namespace Router.Infrastructure.Services;
 
@@ -24,7 +25,9 @@ public sealed class PluginAttemptExecutor(
     IPluginLogSink pluginLogs,
     ILogger<PluginAttemptExecutor> logger,
     PluginResiliencePipelines resilience,
-    IOptions<PluginExecutionOptions> executionOptions) : IPluginAttemptExecutor
+    IOptions<PluginExecutionOptions> executionOptions,
+    ProxyNodeHealthTracker nodeHealth,
+    IOptions<ProxyOptions> proxyOptions) : IPluginAttemptExecutor
 {
     public async Task<PluginInvocationResult> ExecuteAsync(
         string pluginKey,
@@ -268,7 +271,7 @@ public sealed class PluginAttemptExecutor(
                 invocation.BeginResponse(attemptTimeout);
             }
             client = new PluginHttpClient(
-                token => AcquireProxyBindingAsync(pluginKey, overrides, token),
+                token => AcquireProxyBindingAsync(pluginKey, request, overrides, token),
                 http.CreateDirectClient("upstream"),
                 response =>
                 {
@@ -350,6 +353,13 @@ public sealed class PluginAttemptExecutor(
             });
 
             var decision = result.Attempt.Decision!;
+            if (usedProxy is { } healthProxy)
+            {
+                if (result.Response.IsSuccess)
+                    nodeHealth.RecordSuccess(healthProxy.Id);
+                else if (!overrides?.SkipCooldown == true)
+                    await nodeHealth.RecordFailureAsync(healthProxy.Id, result.Attempt.Reason ?? result.Response.Error ?? "request failed", cancellationToken);
+            }
             var nodePolicyTask = usedProxy is { } leasedProxyForPolicy
                 && (decision.ProxyAction == PluginProxyAction.Cooldown || result.Response.IsSuccess)
                 ? proxyPolicy.ReportAsync(pluginKey, leasedProxyForPolicy, result.Attempt with
@@ -405,11 +415,23 @@ public sealed class PluginAttemptExecutor(
 
     private async Task<PluginProxyBinding?> AcquireProxyBindingAsync(
         string pluginKey,
+        AdapterRequest request,
         TestOverrides? overrides,
         CancellationToken cancellationToken)
     {
         var proxyCandidates = await GetProxiesAsync(pluginKey, overrides, cancellationToken);
-        var selectedProxy = SelectProxy(proxyCandidates, overrides?.ProxyId);
+        var sessionId = proxyOptions.Value.SessionAffinityEnabled
+            ? request.RequestHeaders?.TryGetValue("x-session-id", out var sid) == true
+                ? sid
+                : null
+            : null;
+        var selectedProxy = await SelectProxyAsync(
+            pluginKey,
+            proxyCandidates,
+            overrides?.ProxyId,
+            sessionId,
+            proxyOptions.Value.PreferHighScore,
+            cancellationToken);
         if (!string.IsNullOrWhiteSpace(overrides?.ProxyId) && selectedProxy is null)
             throw new HttpRequestException("forced proxy is unavailable");
         if (selectedProxy is null)
@@ -557,28 +579,23 @@ public sealed class PluginAttemptExecutor(
         return available.Where(static proxy => proxy is not null).Select(static proxy => proxy!).ToArray();
     }
 
-    private static ProxyEndpoint? SelectProxy(IReadOnlyList<ProxyEndpoint> proxies, string? forcedId)
-    {
-        if (proxies.Count == 0) return null;
-        if (!string.IsNullOrWhiteSpace(forcedId))
-            return proxies.FirstOrDefault(proxy => proxy.Id.Equals(forcedId, StringComparison.OrdinalIgnoreCase));
-
-        var sample = proxies.OrderBy(_ => Random.Shared.Next()).Take(10).ToArray();
-        var freshQuality = sample
-            .Where(proxy => proxy.ProbeStatus.Equals("Healthy", StringComparison.OrdinalIgnoreCase)
-                && proxy.ProbeConfigurationVersion == proxy.ConfigurationVersion
-                && proxy.LastProbeAt is { } lastProbe
-                && lastProbe >= DateTimeOffset.UtcNow.AddMinutes(-30))
-            .ToArray();
-        if (freshQuality.Length == 0)
-            return sample[Random.Shared.Next(sample.Length)];
-
-        return freshQuality
-            .OrderByDescending(proxy => proxy.CompositeScore)
-            .ThenBy(proxy => proxy.AverageLatencyMs)
-            .ThenBy(_ => Random.Shared.Next())
-            .First();
-    }
+    private Task<ProxyEndpoint?> SelectProxyAsync(
+        string pluginKey,
+        IReadOnlyList<ProxyEndpoint> proxies,
+        string? forcedId,
+        string? sessionId,
+        bool preferHighScore,
+        CancellationToken cancellationToken)
+        => ProxyAffinity.SelectAsync(
+            pluginKey,
+            proxies,
+            forcedId,
+            sessionId,
+            preferHighScore,
+            proxyOptions.Value.SessionAffinityTtlMinutes,
+            shortTermState,
+            logger,
+            cancellationToken);
 
     private static string FormatProxy(ProxyEndpoint proxy)
         => $"{proxy.Scheme.ToString().ToLowerInvariant()}://{proxy.Host}:{proxy.Port}";

@@ -1,7 +1,10 @@
 using System.Net;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Polly;
 using Router.Contracts.Domain;
 using Router.Contracts.Host;
+using Router.Infrastructure.Persistence;
 
 namespace Router.Infrastructure.Services;
 
@@ -10,16 +13,25 @@ namespace Router.Infrastructure.Services;
 /// <param name="subscriptions">代理订阅配置。</param>
 /// <param name="transport">宿主管理的共享物理连接池。</param>
 /// <param name="resilience">有限的共享传输策略。</param>
+/// <param name="affinityState">会话黏连键值存储；未配置时退化为无黏连。</param>
+/// <param name="proxyOptions">代理池配置（优选开关/黏连 TTL）。</param>
+/// <param name="logger">诊断日志。</param>
 public sealed class ProxyPoolHttpClientFactory(
     IProxyStore proxies,
     IProxySubscriptionService subscriptions,
     ProxyTransportFactory transport,
-    PluginResiliencePipelines resilience) : IProxyPoolHttpClientFactory
+    PluginResiliencePipelines resilience,
+    ISharedKeyValueStore? affinityState = null,
+    IOptionsMonitor<ProxyOptions>? proxyOptions = null,
+    ILogger<ProxyPoolHttpClientFactory>? logger = null) : IProxyPoolHttpClientFactory
 {
     private readonly IProxyStore _proxies = proxies ?? throw new ArgumentNullException(nameof(proxies));
     private readonly IProxySubscriptionService _subscriptions = subscriptions ?? throw new ArgumentNullException(nameof(subscriptions));
     private readonly ProxyTransportFactory _transport = transport ?? throw new ArgumentNullException(nameof(transport));
     private readonly PluginResiliencePipelines _resilience = resilience ?? throw new ArgumentNullException(nameof(resilience));
+    private readonly ISharedKeyValueStore? _affinityState = affinityState;
+    private readonly IOptionsMonitor<ProxyOptions>? _proxyOptions = proxyOptions;
+    private readonly ILogger<ProxyPoolHttpClientFactory>? _logger = logger;
 
     /// <inheritdoc />
     public async Task<HttpClient> CreateClientAsync(
@@ -115,8 +127,29 @@ public sealed class ProxyPoolHttpClientFactory(
                 triedNodes?.Clear();
                 remaining = candidates;
             }
-            selected = remaining[Random.Shared.Next(remaining.Length)];
-            triedNodes?.Add(selected.Id);
+
+            var preferHighScore = _proxyOptions?.CurrentValue.PreferHighScore ?? true;
+            var sessionId = options.SessionId;
+            if (preferHighScore || !string.IsNullOrWhiteSpace(sessionId))
+            {
+                // 优选指数优先 + 会话黏连（键空间独立于插件运行时）。
+                selected = await ProxyAffinity.SelectAsync(
+                    "js-http-pool",
+                    remaining,
+                    forcedId: null,
+                    sessionId,
+                    preferHighScore,
+                    ttlMinutes: _proxyOptions?.CurrentValue.SessionAffinityTtlMinutes ?? 30,
+                    _affinityState ?? new NullSharedKeyValueStore(),
+                    _logger ?? (ILogger)Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance,
+                    cancellationToken);
+            }
+            else
+            {
+                selected = remaining[Random.Shared.Next(remaining.Length)];
+            }
+
+            if (selected is not null) triedNodes?.Add(selected.Id);
         }
         else if (!options.AllowDirectFallback)
         {
@@ -185,4 +218,17 @@ public sealed class ProxyPoolHttpClientFactory(
             finally { base.Dispose(disposing); }
         }
     }
+}
+
+/// <summary>未配置 Redis 时的黏连空实现：读写都成功但不保存，行为退化为无黏连。</summary>
+internal sealed class NullSharedKeyValueStore : ISharedKeyValueStore
+{
+    public bool IsConfigured => false;
+    public Task<string?> GetStringAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
+    public Task<bool> SetStringAsync(string key, string value, TimeSpan ttl, CancellationToken cancellationToken = default) => Task.FromResult(false);
+    public Task<DateTimeOffset?> GetExpiryAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult<DateTimeOffset?>(null);
+    public Task<bool> SetExpiryAsync(string key, TimeSpan ttl, CancellationToken cancellationToken = default) => Task.FromResult(false);
+    public Task<bool> SetExpiryIfLaterAsync(string key, DateTimeOffset until, string value, CancellationToken cancellationToken = default) => Task.FromResult(false);
+    public Task<bool> TryAcquireAsync(string key, TimeSpan ttl, CancellationToken cancellationToken = default) => Task.FromResult(false);
+    public Task RemoveAsync(string key, CancellationToken cancellationToken = default) => Task.CompletedTask;
 }

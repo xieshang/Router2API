@@ -688,7 +688,8 @@ public sealed record AnalyticsBucket(
     long Failures,
     long Tokens,
     double AverageLatencyMs,
-    double P95LatencyMs);
+    double P95LatencyMs,
+    IReadOnlyDictionary<string, long> SuccessesByModel);
 /// <summary>表示公开契约类型 AnalyticsReport。</summary>
 
 public sealed record AnalyticsReport(

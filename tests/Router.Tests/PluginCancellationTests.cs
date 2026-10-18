@@ -1,11 +1,13 @@
 using System.Diagnostics;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 using Router.Contracts.Domain;
 using Router.Contracts.Host;
 using Router.Contracts.Pipeline;
 using Router.Contracts.Plugins;
+using Router.Infrastructure.Persistence;
 using Router.Infrastructure.Services;
 
 namespace Router.Tests;
@@ -86,6 +88,7 @@ public sealed class PluginCancellationTests : IDisposable
         return new PluginAttemptExecutor(accounts.Object, Mock.Of<IProxyStore>(), Mock.Of<IProxySubscriptionService>(),
             new ResourceLeaseManager(), Mock.Of<IProxyPolicyStore>(), Mock.Of<ISharedKeyValueStore>(), factory.Object,
             policies, Mock.Of<IModelMetadataCatalog>(), sink, NullLogger<PluginAttemptExecutor>.Instance,
-            _resilience, Microsoft.Extensions.Options.Options.Create(new PluginExecutionOptions()));
+            _resilience, Microsoft.Extensions.Options.Options.Create(new PluginExecutionOptions()), ProxyNodeHealthTrackers.Create(), Options.Create(new ProxyOptions()));
     }
 }
+
