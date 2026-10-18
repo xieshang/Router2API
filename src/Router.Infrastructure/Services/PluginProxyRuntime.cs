@@ -353,11 +353,23 @@ public sealed class PluginAttemptExecutor(
             });
 
             var decision = result.Attempt.Decision!;
+            // 上游按出口 IP 拒绝业务（如 opencode 免费层 403 FreeTierError）：插件对这类响应
+            // 通常返回 NoPenalty（不带显式决策），若不惩罚节点，优选会反复命中同一批被上游
+            // 拉黑的出口段。这里由宿主识别「上游拒绝且与出口相关」的信号，把该节点记为一次
+            // 节点级失败并上报冷却，让优选/轮转自然避开。
+            var nodeRejectedByUpstream = !result.Response.IsSuccess
+                && result.Attempt.Outcome == PluginAttemptOutcome.NoPenalty
+                && IsUpstreamNodeRejection(result.Response.StatusCode, result.Response.Error);
+            if (nodeRejectedByUpstream && decision.ProxyAction == PluginProxyAction.None)
+                decision = decision with { ProxyAction = PluginProxyAction.Cooldown };
             if (usedProxy is { } healthProxy)
             {
                 if (result.Response.IsSuccess)
                     nodeHealth.RecordSuccess(healthProxy.Id);
-                else if (!overrides?.SkipCooldown == true)
+                // 注意运算符优先级：`!overrides?.SkipCooldown == true` 在 overrides 为 null 时恒为
+                // false（可空布尔取反仍是 null，null == true 是 false），生产路径从不记录节点失败、
+                // 节点永远不会被连续失败熔断。必须显式写成 `overrides?.SkipCooldown != true`。
+                else if (nodeRejectedByUpstream || overrides?.SkipCooldown != true)
                     await nodeHealth.RecordFailureAsync(healthProxy.Id, result.Attempt.Reason ?? result.Response.Error ?? "request failed", cancellationToken);
             }
             var nodePolicyTask = usedProxy is { } leasedProxyForPolicy
@@ -435,7 +447,13 @@ public sealed class PluginAttemptExecutor(
         if (!string.IsNullOrWhiteSpace(overrides?.ProxyId) && selectedProxy is null)
             throw new HttpRequestException("forced proxy is unavailable");
         if (selectedProxy is null)
+        {
+            // 严格禁直连：没有可用出口时直接失败，绝不退化为直连。
+            if (!proxyOptions.Value.AllowDirectFallback)
+                throw new HttpRequestException(
+                    "no proxy exit available and direct fallback is disabled (Proxy.AllowDirectFallback=false)");
             return null;
+        }
 
         var proxyLease = await leases.AcquireAsync(
             [selectedProxy],
@@ -631,6 +649,23 @@ public sealed class PluginAttemptExecutor(
             ? new PluginAttemptDecision { FailureKind = PluginFailureKind.Plugin, ReasonCode = "plugin-execution-failure" }.ToResult(reason: reason)
             : policy.TransportFailureDecision?.Invoke().ToResult(reason: reason)
             ?? new PluginAttemptResult(PluginAttemptOutcome.CooldownNode, IsTransportFailure: true, Reason: reason);
+
+    /// <summary>
+    /// 判断失败响应是否是「上游按出口拒绝业务」：同一账号、同一指纹在不同出口 IP 下结果不同，
+    /// 说明拒绝与代理出口相关而非凭据/模型相关。典型信号：
+    /// 403 且错误体含 FreeTierError（opencode 免费层按数据中心 IP 段拉黑）、451（出口地区不合规）。
+    /// 429（限流）与 401/402（凭据问题）与出口无关，不在此列。
+    /// </summary>
+    internal static bool IsUpstreamNodeRejection(int? statusCode, string? error)
+    {
+        if (statusCode is not (403 or 451)) return false;
+        if (string.IsNullOrEmpty(error)) return true;
+        return error.Contains("FreeTierError", StringComparison.OrdinalIgnoreCase)
+            || error.Contains("not allowed", StringComparison.OrdinalIgnoreCase)
+            || error.Contains("forbidden", StringComparison.OrdinalIgnoreCase)
+            || error.Contains("blocked", StringComparison.OrdinalIgnoreCase)
+            || error.Contains("region", StringComparison.OrdinalIgnoreCase);
+    }
 
     private async Task TryWriteLogAsync(PluginLog log)
     {

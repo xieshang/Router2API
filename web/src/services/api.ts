@@ -109,7 +109,7 @@ export interface ModelPlazaModel {
 }
 export interface ModelPlazaResponse { updatedAt: string; source: string; models: ModelPlazaModel[] }
 export interface RequestAttemptDetail { proxyId: string | null; proxyAddress: string; statusCode: number | null; outcome: string; isTransportFailure: boolean; reason: string | null; durationMs: number }
-export interface RequestLog { cancelled?: boolean; id: string; traceId: string; platform: string | null; model: string | null; success: boolean; statusCode: number; durationMs: number; ttfbMs: number | null; usage: { promptTokens: number; completionTokens: number; totalTokens: number } | null; attemptDetails?: RequestAttemptDetail[]; createdAt: string }
+export interface RequestLog { cancelled?: boolean; id: string; traceId: string; platform: string | null; model: string | null; success: boolean; statusCode: number; durationMs: number; ttfbMs: number | null; usage: { promptTokens: number; completionTokens: number; totalTokens: number } | null; attemptDetails?: RequestAttemptDetail[]; sessionId?: string | null; createdAt: string }
 export interface TaskLog { id: string; pluginKey: string; platform: string | null; taskName: string; accountId: string | null; status: string; message: string | null; error: string | null; detailsJson: string | null; durationMs: number; startedAt: string; finishedAt: string | null }
 export interface PluginLog { id: string; pluginKey: string; platform: string | null; level: string; eventType: string; message: string; traceId: string | null; taskName: string | null; accountId: string | null; model: string | null; statusCode: number | null; durationMs: number | null; detailsJson: string | null; createdAt: string }
 export interface ConfigSnapshot {
@@ -120,7 +120,7 @@ export interface ConfigSnapshot {
   database: { path: string }
   redis: { connectionString: string; instanceName: string }
   logging: { dataRetentionDays: number; cleanupCron: string; minimumPluginLogLevel: string }
-  proxy: { consecutiveFailureThreshold: number; sessionAffinityEnabled: boolean; sessionAffinityTtlMinutes: number; preferHighScore: boolean }
+  proxy: { consecutiveFailureThreshold: number; sessionAffinityEnabled: boolean; sessionAffinityTtlMinutes: number; preferHighScore: boolean; allowDirectFallback: boolean }
 }
 export interface AnalyticsBucket { startUtc: string; requests: number; successes: number; failures: number; tokens: number; averageLatencyMs: number; p95LatencyMs: number; successesByModel?: Record<string, number> }
 export interface AnalyticsReport { fromUtc: string; toUtc: string; requests: number; successes: number; failures: number; tokens: number; averageLatencyMs: number; p95LatencyMs: number; buckets: AnalyticsBucket[]; byPlatform: Record<string, number> }
@@ -238,6 +238,7 @@ export const api = {
   saveProxy: (payload: Record<string, unknown>) => request<ProxyEndpoint>('/api/admin/proxies', { method: 'POST', body: payload }),
   deleteProxy: (id: string) => request<void>(`/api/admin/proxies/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   probeProxy: (id: string) => request<ProxyProbeResult>(`/api/admin/proxies/${encodeURIComponent(id)}/probe`, { method: 'POST' }),
+  releaseProxyAffinity: (sessionId: string) => request<{ sessionId: string; released: number }>(`/api/admin/proxy-affinity/${encodeURIComponent(sessionId)}/release`, { method: 'POST' }),
   saveSubscription: (payload: Record<string, unknown>) => request<ProxySubscription>('/api/admin/proxy-subscriptions', { method: 'POST', body: payload }),
   deleteSubscription: (id: string) => request<void>(`/api/admin/proxy-subscriptions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   refreshSubscription: (id: string) => request<{ queued: boolean }>(`/api/admin/proxy-subscriptions/${encodeURIComponent(id)}/refresh`, { method: 'POST' }),

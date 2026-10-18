@@ -21,6 +21,10 @@ public sealed class RouterPipeline(
         ArgumentNullException.ThrowIfNull(context);
         var stopwatch = Stopwatch.StartNew();
         var requestedModel = context.Request.Model;
+        var sessionId = context.Request.RequestHeaders?.TryGetValue("x-session-id", out var sessionIdValue) == true
+            && !string.IsNullOrWhiteSpace(sessionIdValue)
+            ? sessionIdValue
+            : null;
         var started = false;
         var cancelled = false;
         string platform;
@@ -104,7 +108,8 @@ public sealed class RouterPipeline(
                     StatusCode = context.Response?.StatusCode ?? 500,
                     DurationMs = (int)stopwatch.ElapsedMilliseconds,
                     Usage = usage,
-                    AttemptDetails = context.AttemptDetails
+                    AttemptDetails = context.AttemptDetails,
+                    SessionId = sessionId
                 };
                 await requestLogs.WriteAsync(log);
                 try { await usageBuckets.RecordAsync(log); }

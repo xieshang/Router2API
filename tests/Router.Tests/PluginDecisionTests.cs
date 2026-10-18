@@ -204,6 +204,31 @@ public sealed class PluginDecisionTests
         client.ObservedProxyFault.Should().BeTrue();
     }
 
+    [TestMethod]
+    public void ExplicitUpstreamRejectionCanRequestNodeRotationWithoutAHostObservedFault()
+    {
+        // opencode 免费层按出口 IP 返回 403 FreeTierError：请求本身没问题，换个干净出口就是 200。
+        // 宿主要允许插件据此冷却该出口，否则会话黏连会把全部重试钉死在同一台被标记的机器上。
+        var explicitRejection = new PluginAttemptDecision
+        {
+            FailureKind = PluginFailureKind.Upstream,
+            Retry = PluginRetryAction.NextAttempt,
+            ProxyAction = PluginProxyAction.Cooldown,
+            ReasonCode = "free-tier-exit-blocked"
+        }.ToResult(403, """{"type":"error","error":{"type":"FreeTierError"}}""");
+        var rotated = PluginAttemptDecisions.Resolve(Failure(explicitRejection), PluginProxyPolicy.Default, new(null, null, null), false, false);
+        rotated.Decision!.ProxyAction.Should().Be(PluginProxyAction.Cooldown);
+        rotated.Decision.Retry.Should().Be(PluginRetryAction.NextAttempt);
+
+        // 显式声明的传输故障，仍必须由宿主观测佐证。
+        var inventedTransport = new PluginAttemptDecision
+        {
+            FailureKind = PluginFailureKind.Transport, ProxyAction = PluginProxyAction.Cooldown, ReasonCode = "transport"
+        }.ToResult(403);
+        PluginAttemptDecisions.Resolve(Failure(inventedTransport), PluginProxyPolicy.Default, new(null, null, null), false, false)
+            .Decision!.ProxyAction.Should().Be(PluginProxyAction.None);
+    }
+
     private static PluginInvocationResult Failure(PluginAttemptResult attempt) => new(new AdapterResponse { StatusCode = 503, Error = "failed" }, attempt);
     private static AdapterRequest Request() => new() { Model = "m" };
     private static TestOverrides Overrides() => new() { AccountId = "a", SkipCooldown = true };

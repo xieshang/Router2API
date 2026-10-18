@@ -635,6 +635,8 @@ public sealed class RequestLog
     public Usage? Usage { get; init; }
     /// <summary>获取或设置公开成员 AttemptDetails。</summary>
     public IReadOnlyList<RequestAttemptDetail> AttemptDetails { get; init; } = [];
+    /// <summary>调用方会话标识（x-session-id 头），用于会话黏连与日志定位。</summary>
+    public string? SessionId { get; init; }
     /// <summary>获取或设置公开成员 CreatedAt。</summary>
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
 }
