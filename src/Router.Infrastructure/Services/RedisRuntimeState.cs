@@ -163,7 +163,16 @@ public sealed class RedisProxyPolicyStore(RedisKeyValueStore redis) : IProxyPoli
         local now = tonumber(ARGV[1])
         local current = tonumber(redis.call('HGET', KEYS[1], 'cooldownUntil') or '0')
         local failures = redis.call('HINCRBY', KEYS[1], 'failureCount', 1)
-        local seconds = math.min(1800, 2 ^ math.min(8, failures))
+        local status = tonumber(ARGV[3])
+        -- 上游拒绝（403/429/451）通常意味着这个出口被目标站标记/限流，而不是一次偶发抖动。
+        -- 若只冷却 2 秒，优选排序在冷却过期后立刻又把同一批高速节点选回来，请求会在同一小撮
+        -- 节点上原地打转（opencode 免费层按出口 IP 拒绝时就是这样）。所以这类失败给更长的底噪。
+        local seconds
+        if status == 403 or status == 429 or status == 451 then
+            seconds = math.min(1800, 300 * (2 ^ math.min(4, failures - 1)))
+        else
+            seconds = math.min(1800, 2 ^ math.min(8, failures))
+        end
         local requested = now + seconds * 1000
         local ttl = seconds * 1000
         local currentTtl = redis.call('PTTL', KEYS[1])
